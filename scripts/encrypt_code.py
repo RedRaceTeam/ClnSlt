@@ -12,6 +12,7 @@ import json
 import hashlib
 import base64
 import sqlite3
+import time
 from cryptography.fernet import Fernet
 
 # ===== КОНФИГ =====
@@ -20,25 +21,21 @@ SECRET_KEY = "PurgeLabs_S3cr3t_2026"
 def encrypt_file(input_file: str, output_file: str = None):
     """Шифрует файл и сохраняет результат"""
     
-    # Читаем код
     with open(input_file, 'r', encoding='utf-8') as f:
         code = f.read()
     
-    # Шифруем
     key_hash = hashlib.sha256(SECRET_KEY.encode()).digest()
     fernet_key = base64.urlsafe_b64encode(key_hash)
     cipher = Fernet(fernet_key)
     
     encrypted = cipher.encrypt(code.encode()).decode('utf-8')
     
-    # Сохраняем
     if output_file is None:
         output_file = input_file.replace('.py', '.enc')
     
     with open(output_file, 'w', encoding='utf-8') as f:
         f.write(encrypted)
     
-    # Хеш для проверки целостности
     code_hash = hashlib.sha256(code.encode()).hexdigest()
     
     print(f"✅ Файл {input_file} зашифрован -> {output_file}")
@@ -69,8 +66,6 @@ def add_to_db(version: str, encrypted: str, code_hash: str):
     print(f"✅ Версия {version} добавлена в базу данных")
 
 if __name__ == "__main__":
-    import time
-    
     if len(sys.argv) < 2:
         print("Использование: python encrypt_code.py <файл.py> [версия]")
         sys.exit(1)
@@ -79,4 +74,4 @@ if __name__ == "__main__":
     version = sys.argv[2] if len(sys.argv) > 2 else "7.0.0"
     
     encrypted, code_hash = encrypt_file(input_file)
-    add_to_db(version, encrypted, code_hash)
+    add_to_db(version, encrypted, code_hash) 
