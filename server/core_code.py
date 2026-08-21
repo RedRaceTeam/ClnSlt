@@ -11,6 +11,7 @@ import sys
 import json
 import asyncio
 import aiohttp
+import re
 import time
 from datetime import datetime
 from typing import Dict, List
@@ -66,10 +67,6 @@ SOURCES = {
     "ixbt": "https://forum.ixbt.com/users.cgi?id={}",
     "cyberforum": "https://www.cyberforum.ru/members/{}",
 }
-
-# ============================================================
-# ПОИСК
-# ============================================================
 
 async def check_source(session, source: str, target: str) -> Dict:
     url = SOURCES[source].format(target)
@@ -128,27 +125,34 @@ async def search_email(email: str) -> Dict:
         pass
     return result
 
-# ============================================================
-# КЛАСТЕРИЗАЦИЯ
-# ============================================================
+async def search_phone(phone: str) -> Dict:
+    try:
+        import phonenumbers
+        from phonenumbers import geocoder, carrier
+        parsed = phonenumbers.parse(phone)
+        return {
+            "valid": phonenumbers.is_valid_number(parsed),
+            "location": geocoder.description_for_number(parsed, "ru") or "—",
+            "carrier": carrier.name_for_number(parsed, "ru") or "—"
+        }
+    except:
+        return {"error": "Ошибка проверки телефона"}
 
 def calculate_similarity(profile_a: Dict, profile_b: Dict) -> float:
+    from difflib import SequenceMatcher
     score = 0.0
     total = 0
     
     if profile_a.get('bio') and profile_b.get('bio'):
         total += 1
-        from difflib import SequenceMatcher
         score += SequenceMatcher(None, profile_a['bio'][:100], profile_b['bio'][:100]).ratio() * 0.8
     
     if profile_a.get('username') and profile_b.get('username'):
         total += 1
-        from difflib import SequenceMatcher
         score += SequenceMatcher(None, profile_a['username'].lower(), profile_b['username'].lower()).ratio() * 0.6
     
     if total == 0:
         return 0.0
-    
     return round((score / total) * 100, 1)
 
 def cluster_accounts(profiles: List[Dict]) -> List[Dict]:
@@ -192,10 +196,6 @@ def cluster_accounts(profiles: List[Dict]) -> List[Dict]:
     clusters.sort(key=lambda x: x["confidence"], reverse=True)
     return clusters
 
-# ============================================================
-# ОТЧЁТЫ
-# ============================================================
-
 def generate_report(results: Dict) -> str:
     html = f"""
 <!DOCTYPE html>
@@ -223,10 +223,6 @@ def generate_report(results: Dict) -> str:
     """
     return html
 
-# ============================================================
-# ИНТЕРФЕЙС
-# ============================================================
-
 def print_help():
     print("""
 ┌─────────────────────────────────────────────────────────────┐
@@ -234,6 +230,7 @@ def print_help():
 ├─────────────────────────────────────────────────────────────┤
 │  search <никнейм>     — Поиск по никнейму                 │
 │  email <email>        — Проверка email (HIBP)             │
+│  phone <номер>        — Проверка телефона                 │
 │  cluster              — Кластеризация найденных профилей  │
 │  report               — Сохранить отчёт                  │
 │  help                 — Эта справка                      │
@@ -244,6 +241,8 @@ def print_help():
 def main():
     print("ClnSIt Pro v7.0 — OSINT-инструмент")
     print("Введите 'help' для списка команд\n")
+    
+    last_results = None
     
     while True:
         cmd = input("> ").strip()
@@ -260,6 +259,7 @@ def main():
             print(f"🔍 Поиск {username}...")
             result = asyncio.run(search_username(username))
             found = result.get('found', [])
+            last_results = result
             print(f"✅ Найдено: {len(found)} профилей")
             for p in found[:10]:
                 print(f"  • {p['source']}: {p['url']}")
@@ -275,14 +275,40 @@ def main():
                     print(f"  • {b}")
             else:
                 print("✅ Утечек не найдено")
+        elif cmd.startswith("phone "):
+            phone = cmd.split(" ", 1)[1]
+            print(f"📱 Проверка {phone}...")
+            result = asyncio.run(search_phone(phone))
+            if result.get("error"):
+                print(f"❌ {result['error']}")
+            else:
+                print(f"✅ Валидный: {'Да' if result.get('valid') else 'Нет'}")
+                print(f"  Регион: {result.get('location', '—')}")
+                print(f"  Оператор: {result.get('carrier', '—')}")
         elif cmd == "cluster":
-            print("📊 Кластеризация...")
-            # Здесь логика кластеризации
+            if not last_results:
+                print("❌ Сначала выполните поиск (search)")
+                continue
+            profiles = last_results.get('found', [])
+            if not profiles:
+                print("❌ Нет профилей для кластеризации")
+                continue
+            print(f"📊 Кластеризация {len(profiles)} профилей...")
+            clusters = cluster_accounts(profiles)
+            print(f"✅ Найдено кластеров: {len(clusters)}")
+            for i, c in enumerate(clusters):
+                print(f"  Кластер #{i+1}: {len(c['profiles'])} профилей, вероятность {c['confidence']}%")
         elif cmd == "report":
+            if not last_results:
+                print("❌ Сначала выполните поиск (search)")
+                continue
             filename = f"report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
+            html = generate_report(last_results)
+            with open(filename, 'w') as f:
+                f.write(html)
             print(f"📄 Отчёт сохранён: {filename}")
         else:
             print(f"❌ Неизвестная команда: {cmd}")
 
 if __name__ == "__main__":
-    main()
+    main() 
